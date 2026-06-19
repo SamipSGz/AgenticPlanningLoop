@@ -34,9 +34,12 @@ Respond with ONLY a valid JSON object — no prose, no markdown outside the JSON
 }}
 
 ## Critical JSON Rules
-- All string values in JSON MUST use \\n for newlines, never literal newlines inside a string value.
-- For code in action_input, write it as a single line with \\n separating lines: "code": "line1\\nline2\\nline3"
-- The entire response must be parseable by json.loads() — no trailing commas, no unescaped quotes.
+- Your response MUST be a single valid JSON object with NO literal newlines inside any string value.
+- For code_exec: write ALL code on ONE line using semicolons to separate statements.
+  CORRECT:   "code": "def f(x): return x*2; print(f(5))"
+  CORRECT:   "code": "a=[3,1,2]; a.sort(); print(a)"
+  WRONG:     "code": "def f(x):\n    return x*2"  ← literal newline breaks JSON
+- For multi-line functions use semicolons and inline body: "def f(x): return x+1; print(f(3))"
 
 ## Rules
 1. If a web_search or tool call returned useful text, YOU MUST use that information to answer — do NOT call another tool just to "verify".

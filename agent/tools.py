@@ -97,6 +97,10 @@ def code_exec(code: str, language: str = "python") -> ToolResult:
     except (UnicodeDecodeError, ValueError):
         pass
 
+    # If still a single line with no real newlines, it may use semicolons — that's valid Python
+    # Write to file so indentation/escaping is never an issue
+
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
         f.write(code)
         tmp_path = f.name
