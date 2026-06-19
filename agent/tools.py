@@ -86,18 +86,24 @@ def _duckduckgo_search(query: str, max_results: int) -> ToolResult:
 
 
 def code_exec(code: str, language: str = "python") -> ToolResult:
+    import tempfile
+
     if language.lower() not in ("python", "python3"):
         return ToolResult(success=False, output="", error=f"Only Python is supported, got: {language!r}")
 
-    # LLMs often send \\n as literal escape sequences; decode them into real newlines
+    # Decode \\n / \\t escape sequences that LLMs embed in JSON strings
     try:
         code = code.encode("raw_unicode_escape").decode("unicode_escape")
     except (UnicodeDecodeError, ValueError):
         pass
 
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+        f.write(code)
+        tmp_path = f.name
+
     try:
         proc = subprocess.run(
-            ["python3", "-c", code],
+            ["python3", tmp_path],
             capture_output=True,
             text=True,
             timeout=CODE_EXEC_TIMEOUT,
@@ -108,6 +114,9 @@ def code_exec(code: str, language: str = "python") -> ToolResult:
         return ToolResult(success=False, output="", error="python3 not found in PATH")
     except OSError as exc:
         return ToolResult(success=False, output="", error=f"OS error running python3: {exc}")
+    finally:
+        import os as _os
+        _os.unlink(tmp_path)
 
     if proc.returncode != 0:
         return ToolResult(
