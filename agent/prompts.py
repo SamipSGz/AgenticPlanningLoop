@@ -36,7 +36,7 @@ Respond with ONLY a valid JSON object — no prose, no markdown outside the JSON
 ## Rules
 1. If a web_search or tool call returned useful text, YOU MUST use that information to answer — do NOT call another tool just to "verify".
 2. After receiving ONE good search result, synthesize the answer immediately and call action="finish".
-3. Never call calculator or code_exec unless the task explicitly requires a calculation or running code.
+3. Never call calculator or code_exec unless the task explicitly requires a calculation or running code. code_exec runs standard Python only — do NOT import requests, numpy, pandas or any third-party package. Use urllib.request for HTTP or do pure computation.
 4. Never repeat a tool call with the same or similar input as a previous step.
 5. If the previous step returned no useful information, set "made_progress": false and explain a different plan in "replan_reason".
 6. For finish: action_input must contain key "answer" with the complete response.
