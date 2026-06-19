@@ -138,29 +138,39 @@ def _call_openai_compat(
     model_name = model or os.environ.get("GROQ_MODEL") or default_models.get(provider, "llama-3.3-70b-versatile")
     timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
 
-    try:
-        response = httpx.post(
-            f"{base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": model_name,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                "temperature": 0.1,
-                "max_tokens": 4096,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=timeout,
-        )
-        response.raise_for_status()
-    except httpx.TimeoutException as exc:
-        raise RuntimeError(f"Groq request timed out after {timeout}s") from exc
-    except httpx.HTTPStatusError as exc:
-        raise RuntimeError(f"Groq HTTP {exc.response.status_code}: {exc.response.text[:400]}") from exc
-    except httpx.RequestError as exc:
-        raise RuntimeError(f"Cannot reach {base_url}: {exc}") from exc
+    import time as _time
+
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 4096,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+    response = None
+    for attempt in range(4):
+        try:
+            response = httpx.post(f"{base_url}/chat/completions", headers=headers, json=payload, timeout=timeout)
+            if response.status_code == 429:
+                retry_after = float(response.headers.get("retry-after", 15 * (attempt + 1)))
+                logger.warning("rate limited by %s, waiting %.1fs (attempt %d)", provider, retry_after, attempt + 1)
+                _time.sleep(retry_after)
+                continue
+            response.raise_for_status()
+            break
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(f"Groq request timed out after {timeout}s") from exc
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"Groq HTTP {exc.response.status_code}: {exc.response.text[:400]}") from exc
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"Cannot reach {base_url}: {exc}") from exc
+    else:
+        raise RuntimeError(f"Rate limit retries exhausted after 4 attempts")
 
     data = response.json()
     content: str = data["choices"][0]["message"]["content"]
