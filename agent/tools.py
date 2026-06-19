@@ -89,6 +89,12 @@ def code_exec(code: str, language: str = "python") -> ToolResult:
     if language.lower() not in ("python", "python3"):
         return ToolResult(success=False, output="", error=f"Only Python is supported, got: {language!r}")
 
+    # LLMs often send \\n as literal escape sequences; decode them into real newlines
+    try:
+        code = code.encode("raw_unicode_escape").decode("unicode_escape")
+    except (UnicodeDecodeError, ValueError):
+        pass
+
     try:
         proc = subprocess.run(
             ["python3", "-c", code],
