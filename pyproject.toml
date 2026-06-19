@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "constrained-agent"
+version = "0.1.0"
+description = "Resource-Constrained Agentic Planning Loop"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "ddgs>=0.1",
+    "anthropic>=0.28",
+]
+
+[project.scripts]
+constrained-agent = "agent.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires a running LLM (set RUN_INTEGRATION=1)",
+]

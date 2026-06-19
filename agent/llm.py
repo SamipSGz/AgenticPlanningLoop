@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+from typing import Optional, Tuple
+
+import httpx
+
+from agent.budget import BudgetExceededError, BudgetManager
+from agent.schemas import AgentAction
+
+logger = logging.getLogger(__name__)
+
+_VALID_ACTIONS = frozenset({"web_search", "code_exec", "calculator", "finish"})
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+def call_llm(
+    system_prompt: str,
+    user_message: str,
+    budget: BudgetManager,
+    model: Optional[str] = None,
+) -> Tuple[AgentAction, int, int]:
+    budget.assert_can_call()
+    provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
+    if provider == "anthropic":
+        return _call_anthropic(system_prompt, user_message, budget, model)
+    return _call_ollama(system_prompt, user_message, budget, model)
+
+
+def _call_ollama(
+    system_prompt: str,
+    user_message: str,
+    budget: BudgetManager,
+    model: Optional[str],
+) -> Tuple[AgentAction, int, int]:
+    ollama_model = model or os.environ.get("OLLAMA_MODEL", "llama3.2")
+    ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+    timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
+
+    try:
+        response = httpx.post(
+            f"{ollama_url}/api/chat",
+            json={
+                "model": ollama_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "format": "json",
+                "stream": False,
+                "options": {"temperature": 0.1},
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Ollama request timed out after {timeout}s") from exc
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"Ollama HTTP {exc.response.status_code}: {exc.response.text[:400]}") from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"Cannot reach Ollama at {ollama_url}: {exc}") from exc
+
+    data = response.json()
+    content: str = data["message"]["content"]
+    input_tokens = data.get("prompt_eval_count") or _estimate_tokens(system_prompt + user_message)
+    output_tokens = data.get("eval_count") or _estimate_tokens(content)
+
+    cost = budget.record_call(input_tokens, output_tokens)
+    logger.info("call #%d | %d/%d tokens | $%.5f | total $%.5f", budget.calls_used, input_tokens, output_tokens, cost, budget.cost_used)
+
+    return _parse_action(content), input_tokens, output_tokens
+
+
+def _call_anthropic(
+    system_prompt: str,
+    user_message: str,
+    budget: BudgetManager,
+    model: Optional[str],
+) -> Tuple[AgentAction, int, int]:
+    try:
+        import anthropic
+    except ImportError as exc:
+        raise RuntimeError("anthropic package not installed") from exc
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    model_name = model or os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+    timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
+
+    try:
+        resp = client.messages.create(
+            model=model_name,
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_message}],
+            timeout=timeout,
+        )
+    except anthropic.APITimeoutError as exc:
+        raise RuntimeError("Anthropic request timed out") from exc
+    except anthropic.APIStatusError as exc:
+        raise RuntimeError(f"Anthropic API error {exc.status_code}: {exc.message}") from exc
+
+    content = resp.content[0].text
+    input_tokens = resp.usage.input_tokens
+    output_tokens = resp.usage.output_tokens
+
+    cost = budget.record_call(input_tokens, output_tokens)
+    logger.info("call #%d | %d/%d tokens | $%.5f | total $%.5f", budget.calls_used, input_tokens, output_tokens, cost, budget.cost_used)
+
+    return _parse_action(content), input_tokens, output_tokens
+
+
+def _parse_action(content: str) -> AgentAction:
+    text = content.strip()
+
+    if "```json" in text:
+        text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in text:
+        text = text.split("```", 1)[1].split("```", 1)[0].strip()
+
+    data: dict = {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}") + 1
+        if start >= 0 and end > start:
+            try:
+                data = json.loads(text[start:end])
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"Cannot parse LLM response as JSON: {exc}\nRaw: {text[:300]}") from exc
+        else:
+            raise ValueError(f"No JSON object found in LLM response: {text[:300]}")
+
+    raw_action = str(data.get("action", "finish")).lower()
+    if raw_action in _VALID_ACTIONS:
+        action = raw_action
+    elif "search" in raw_action:
+        action = "web_search"
+    elif any(k in raw_action for k in ("code", "exec", "run", "python")):
+        action = "code_exec"
+    elif any(k in raw_action for k in ("calc", "math", "compute")):
+        action = "calculator"
+    else:
+        action = "finish"
+
+    action_input: dict = data.get("action_input", data.get("input", {}))
+    if not isinstance(action_input, dict):
+        action_input = {}
+
+    if action == "finish" and "answer" not in action_input:
+        answer = data.get("answer") or data.get("result") or data.get("response")
+        if answer:
+            action_input["answer"] = str(answer)
+
+    return AgentAction(
+        thought=str(data.get("thought", "(no thought)")),
+        made_progress=bool(data.get("made_progress", True)),
+        replan_reason=data.get("replan_reason") or None,
+        action=action,
+        action_input=action_input,
+    )
