@@ -173,6 +173,34 @@ def _call_openai_compat(
     return _parse_action(content), input_tokens, output_tokens
 
 
+def _sanitize_json(text: str) -> str:
+    """Replace literal newlines inside JSON string values with \\n."""
+    import re
+    # Replace unescaped literal newlines inside quoted strings
+    result = []
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            result.append(ch)
+            escape_next = False
+        elif ch == "\\":
+            result.append(ch)
+            escape_next = True
+        elif ch == '"':
+            in_string = not in_string
+            result.append(ch)
+        elif in_string and ch == "\n":
+            result.append("\\n")
+        elif in_string and ch == "\r":
+            result.append("\\r")
+        elif in_string and ch == "\t":
+            result.append("\\t")
+        else:
+            result.append(ch)
+    return "".join(result)
+
+
 def _parse_action(content: str) -> AgentAction:
     text = content.strip()
 
@@ -185,6 +213,7 @@ def _parse_action(content: str) -> AgentAction:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
+        text = _sanitize_json(text)
         start, end = text.find("{"), text.rfind("}") + 1
         if start >= 0 and end > start:
             try:

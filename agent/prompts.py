@@ -33,6 +33,11 @@ Respond with ONLY a valid JSON object — no prose, no markdown outside the JSON
   "action_input": {{...}}
 }}
 
+## Critical JSON Rules
+- All string values in JSON MUST use \\n for newlines, never literal newlines inside a string value.
+- For code in action_input, write it as a single line with \\n separating lines: "code": "line1\\nline2\\nline3"
+- The entire response must be parseable by json.loads() — no trailing commas, no unescaped quotes.
+
 ## Rules
 1. If a web_search or tool call returned useful text, YOU MUST use that information to answer — do NOT call another tool just to "verify".
 2. After receiving ONE good search result, synthesize the answer immediately and call action="finish".
