@@ -175,7 +175,6 @@ def _call_openai_compat(
 
 def _sanitize_json(text: str) -> str:
     """Replace literal newlines inside JSON string values with \\n."""
-    import re
     # Replace unescaped literal newlines inside quoted strings
     result = []
     in_string = False
