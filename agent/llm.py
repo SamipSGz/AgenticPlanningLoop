@@ -29,6 +29,8 @@ def call_llm(
     provider = os.environ.get("LLM_PROVIDER", "ollama").lower()
     if provider == "anthropic":
         return _call_anthropic(system_prompt, user_message, budget, model)
+    if provider == "groq":
+        return _call_openai_compat(system_prompt, user_message, budget, model)
     return _call_ollama(system_prompt, user_message, budget, model)
 
 
@@ -111,6 +113,59 @@ def _call_anthropic(
     content = resp.content[0].text
     input_tokens = resp.usage.input_tokens
     output_tokens = resp.usage.output_tokens
+
+    cost = budget.record_call(input_tokens, output_tokens)
+    logger.info("call #%d | %d/%d tokens | $%.5f | total $%.5f", budget.calls_used, input_tokens, output_tokens, cost, budget.cost_used)
+
+    return _parse_action(content), input_tokens, output_tokens
+
+
+def _call_openai_compat(
+    system_prompt: str,
+    user_message: str,
+    budget: BudgetManager,
+    model: Optional[str],
+) -> Tuple[AgentAction, int, int]:
+    provider = os.environ.get("LLM_PROVIDER", "groq").lower()
+    base_urls = {"groq": "https://api.groq.com/openai/v1"}
+    base_url = os.environ.get("OPENAI_BASE_URL") or base_urls.get(provider, "https://api.groq.com/openai/v1")
+
+    api_key = os.environ.get("GROQ_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        raise RuntimeError(f"{provider.upper()}_API_KEY is not set")
+
+    default_models = {"groq": "llama-3.3-70b-versatile"}
+    model_name = model or os.environ.get("GROQ_MODEL") or default_models.get(provider, "llama-3.3-70b-versatile")
+    timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
+
+    try:
+        response = httpx.post(
+            f"{base_url}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                "temperature": 0.1,
+                "response_format": {"type": "json_object"},
+            },
+            timeout=timeout,
+        )
+        response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise RuntimeError(f"Groq request timed out after {timeout}s") from exc
+    except httpx.HTTPStatusError as exc:
+        raise RuntimeError(f"Groq HTTP {exc.response.status_code}: {exc.response.text[:400]}") from exc
+    except httpx.RequestError as exc:
+        raise RuntimeError(f"Cannot reach {base_url}: {exc}") from exc
+
+    data = response.json()
+    content: str = data["choices"][0]["message"]["content"]
+    usage = data.get("usage", {})
+    input_tokens = usage.get("prompt_tokens") or _estimate_tokens(system_prompt + user_message)
+    output_tokens = usage.get("completion_tokens") or _estimate_tokens(content)
 
     cost = budget.record_call(input_tokens, output_tokens)
     logger.info("call #%d | %d/%d tokens | $%.5f | total $%.5f", budget.calls_used, input_tokens, output_tokens, cost, budget.cost_used)

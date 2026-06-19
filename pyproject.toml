@@ -16,6 +16,9 @@ dependencies = [
     "uvicorn[standard]>=0.29",
 ]
 
+[tool.setuptools.packages.find]
+include = ["agent*"]
+
 [project.scripts]
 constrained-agent = "agent.main:main"
 
