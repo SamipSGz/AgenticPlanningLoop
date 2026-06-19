@@ -149,6 +149,7 @@ def _call_openai_compat(
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.1,
+                "max_tokens": 2048,
                 "response_format": {"type": "json_object"},
             },
             timeout=timeout,
