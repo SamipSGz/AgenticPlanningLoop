@@ -65,7 +65,7 @@ def run_agent(
             1 for s in state.steps
             if s.action == action.action and s.made_progress
         )
-        if same_tool_successes >= 3:
+        if same_tool_successes >= 6:
             last_good = next(
                 (s.observation for s in reversed(state.steps) if s.made_progress), ""
             )

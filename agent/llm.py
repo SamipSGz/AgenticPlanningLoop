@@ -149,7 +149,7 @@ def _call_openai_compat(
                     {"role": "user", "content": user_message},
                 ],
                 "temperature": 0.1,
-                "max_tokens": 2048,
+                "max_tokens": 4096,
                 "response_format": {"type": "json_object"},
             },
             timeout=timeout,
@@ -188,23 +188,43 @@ def _regex_extract(text: str) -> dict:
     if m:
         data["made_progress"] = m.group(1) == "true"
 
+    def _extract_string_value(src: str, key: str) -> str | None:
+        """Extract a JSON string value by key, handling escaped chars and multiline."""
+        pattern = rf'"{re.escape(key)}"\s*:\s*"'
+        m = re.search(pattern, src)
+        if not m:
+            return None
+        i = m.end()
+        result = []
+        while i < len(src):
+            ch = src[i]
+            if ch == "\\" and i + 1 < len(src):
+                result.append(src[i:i+2])
+                i += 2
+            elif ch == '"':
+                break
+            else:
+                result.append(ch)
+                i += 1
+        return "".join(result)
+
     action = data.get("action", "")
     if action == "code_exec":
-        m = re.search(r'"code"\s*:\s*"(.*?)"(?=\s*[,}\]])', text, re.DOTALL)
-        if m:
-            data["action_input"] = {"code": m.group(1)}
+        val = _extract_string_value(text, "code")
+        if val is not None:
+            data["action_input"] = {"code": val}
     elif action == "web_search":
-        m = re.search(r'"query"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
-        if m:
-            data["action_input"] = {"query": m.group(1)}
+        val = _extract_string_value(text, "query")
+        if val is not None:
+            data["action_input"] = {"query": val}
     elif action == "calculator":
-        m = re.search(r'"expression"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
-        if m:
-            data["action_input"] = {"expression": m.group(1)}
+        val = _extract_string_value(text, "expression")
+        if val is not None:
+            data["action_input"] = {"expression": val}
     elif action == "finish":
-        m = re.search(r'"answer"\s*:\s*"(.*?)"(?=\s*[,}\]])', text, re.DOTALL)
-        if m:
-            data["action_input"] = {"answer": m.group(1)}
+        val = _extract_string_value(text, "answer")
+        if val is not None:
+            data["action_input"] = {"answer": val}
 
     return data
 

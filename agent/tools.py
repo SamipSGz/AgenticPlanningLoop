@@ -128,7 +128,8 @@ def code_exec(code: str, language: str = "python") -> ToolResult:
             output=proc.stdout[:2000] if proc.stdout else "",
             error=f"Exit {proc.returncode}: {proc.stderr[:500]}",
         )
-    return ToolResult(success=True, output=proc.stdout[:4000] if proc.stdout else "(no output)")
+    output = proc.stdout[:4000] if proc.stdout else ""
+    return ToolResult(success=True, output=output if output.strip() else "(no output — add print() to see results)")
 
 
 _SAFE_BINOPS: Dict[type, Any] = {
@@ -223,10 +224,14 @@ TOOL_REGISTRY: Dict[str, Dict[str, Any]] = {
 
 
 def execute_tool(name: str, inputs: Dict[str, Any]) -> ToolResult:
+    import inspect
     entry = TOOL_REGISTRY.get(name)
     if entry is None:
         return ToolResult(success=False, output="", error=f"Unknown tool: {name!r}. Available: {list(TOOL_REGISTRY)}")
+    fn = entry["fn"]
+    valid_params = set(inspect.signature(fn).parameters)
+    filtered = {k: v for k, v in inputs.items() if k in valid_params}
     try:
-        return entry["fn"](**inputs)
+        return fn(**filtered)
     except TypeError as exc:
         return ToolResult(success=False, output="", error=f"Invalid inputs for {name!r}: {exc}")

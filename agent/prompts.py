@@ -36,18 +36,22 @@ Respond with ONLY a valid JSON object — no prose, no markdown outside the JSON
 ## Critical JSON Rules
 - Your entire response MUST be one valid JSON object.
 - String values MUST use \\n for newlines — never embed literal line breaks inside a JSON string.
-- Use single quotes inside Python code strings to avoid escaping: 'hello' not "hello"
+- CRITICAL: Use ONLY single quotes inside Python code — never double quotes inside code strings.
+  CORRECT: print('result:', x)   WRONG: print("result:", x)
+  CORRECT: s = 'hello'           WRONG: s = "hello"
 - Example of correct code_exec format:
-  "action_input": {"code": "def merge_sort(arr):\\n    if len(arr)<=1: return arr\\n    m=len(arr)//2\\n    return sorted(merge_sort(arr[:m])+merge_sort(arr[m:]))\\nprint(merge_sort([3,1,2]))"}
+  "action_input": {{"code": "def f(x):\\n    return x*2\\nprint(f(5))"}}
 
 ## Rules
 1. If a web_search or tool call returned useful text, YOU MUST use that information to answer — do NOT call another tool just to "verify".
 2. After receiving ONE good search result, synthesize the answer immediately and call action="finish".
 3. Never call calculator or code_exec unless the task explicitly requires a calculation or running code. code_exec runs standard Python only — do NOT import requests, numpy, pandas or any third-party package. Use urllib.request for HTTP or do pure computation.
+4. Each code_exec call is independent — never copy output from a previous step into new code. Always recompute from scratch (e.g. re-define functions at the top of each call).
+5. Every code_exec MUST end with at least one print() statement — otherwise the result is invisible. Never submit code without a print() at the end.
 4. Never repeat a tool call with the same or similar input as a previous step.
-5. If the previous step returned no useful information, set "made_progress": false and explain a different plan in "replan_reason".
-6. For finish: action_input must contain key "answer" with the complete response.
-7. If you have seen 2 or more web_search results already, you MUST call action="finish" next — no more searching.
+6. If the previous step returned no useful information, set "made_progress": false and explain a different plan in "replan_reason".
+7. For finish: action_input must contain key "answer" with the complete response.
+8. If you have seen 4 or more web_search results already, you MUST call action="finish" next — no more searching.
 """
 
 
@@ -61,8 +65,8 @@ def build_user_message(task: str, history: list) -> str:
     parts.append("Steps taken so far:")
     for step in history:
         obs = step["observation"]
-        if len(obs) > 800:
-            obs = obs[:800] + "\n...[truncated]"
+        if len(obs) > 400:
+            obs = obs[:400] + "\n...[truncated — recompute in next code call, do not paste this output]"
         parts += [
             f"\n--- Step {step['step_num']} ---",
             f"Thought      : {step['thought']}",
