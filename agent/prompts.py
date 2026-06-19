@@ -34,12 +34,11 @@ Respond with ONLY a valid JSON object — no prose, no markdown outside the JSON
 }}
 
 ## Critical JSON Rules
-- Your response MUST be a single valid JSON object with NO literal newlines inside any string value.
-- For code_exec: write ALL code on ONE line using semicolons to separate statements.
-  CORRECT:   "code": "def f(x): return x*2; print(f(5))"
-  CORRECT:   "code": "a=[3,1,2]; a.sort(); print(a)"
-  WRONG:     "code": "def f(x):\n    return x*2"  ← literal newline breaks JSON
-- For multi-line functions use semicolons and inline body: "def f(x): return x+1; print(f(3))"
+- Your entire response MUST be one valid JSON object.
+- String values MUST use \\n for newlines — never embed literal line breaks inside a JSON string.
+- Use single quotes inside Python code strings to avoid escaping: 'hello' not "hello"
+- Example of correct code_exec format:
+  "action_input": {"code": "def merge_sort(arr):\\n    if len(arr)<=1: return arr\\n    m=len(arr)//2\\n    return sorted(merge_sort(arr[:m])+merge_sort(arr[m:]))\\nprint(merge_sort([3,1,2]))"}
 
 ## Rules
 1. If a web_search or tool call returned useful text, YOU MUST use that information to answer — do NOT call another tool just to "verify".

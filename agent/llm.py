@@ -174,6 +174,41 @@ def _call_openai_compat(
     return _parse_action(content), input_tokens, output_tokens
 
 
+def _regex_extract(text: str) -> dict:
+    """Last-resort field extraction when JSON parsing completely fails."""
+    import re
+    data: dict = {}
+
+    for field in ("thought", "action", "replan_reason"):
+        m = re.search(rf'"{field}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            data[field] = m.group(1)
+
+    m = re.search(r'"made_progress"\s*:\s*(true|false)', text)
+    if m:
+        data["made_progress"] = m.group(1) == "true"
+
+    action = data.get("action", "")
+    if action == "code_exec":
+        m = re.search(r'"code"\s*:\s*"(.*?)"(?=\s*[,}\]])', text, re.DOTALL)
+        if m:
+            data["action_input"] = {"code": m.group(1)}
+    elif action == "web_search":
+        m = re.search(r'"query"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            data["action_input"] = {"query": m.group(1)}
+    elif action == "calculator":
+        m = re.search(r'"expression"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            data["action_input"] = {"expression": m.group(1)}
+    elif action == "finish":
+        m = re.search(r'"answer"\s*:\s*"(.*?)"(?=\s*[,}\]])', text, re.DOTALL)
+        if m:
+            data["action_input"] = {"answer": m.group(1)}
+
+    return data
+
+
 def _sanitize_json(text: str) -> str:
     """Replace literal newlines inside JSON string values with \\n."""
     # Replace unescaped literal newlines inside quoted strings
@@ -213,15 +248,19 @@ def _parse_action(content: str) -> AgentAction:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        text = _sanitize_json(text)
-        start, end = text.find("{"), text.rfind("}") + 1
+        sanitized = _sanitize_json(text)
+        start, end = sanitized.find("{"), sanitized.rfind("}") + 1
         if start >= 0 and end > start:
             try:
-                data = json.loads(text[start:end])
-            except json.JSONDecodeError as exc:
-                raise ValueError(f"Cannot parse LLM response as JSON: {exc}\nRaw: {text[:300]}") from exc
+                data = json.loads(sanitized[start:end])
+            except json.JSONDecodeError:
+                data = _regex_extract(text)
+                if not data.get("action"):
+                    raise ValueError(f"Cannot parse LLM response as JSON.\nRaw: {text[:400]}")
         else:
-            raise ValueError(f"No JSON object found in LLM response: {text[:300]}")
+            data = _regex_extract(text)
+            if not data.get("action"):
+                raise ValueError(f"No JSON object found in LLM response: {text[:300]}")
 
     raw_action = str(data.get("action", "finish")).lower()
     if raw_action in _VALID_ACTIONS:
